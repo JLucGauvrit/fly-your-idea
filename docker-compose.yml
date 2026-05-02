@@ -15,17 +15,23 @@ networks:
     driver: bridge
 
 services:
-  # --- SEGMENT AVION ---
+
+  # ─── SEGMENT AVION ────────────────────────────────────────────────────────
+
   aircraft-app:
     container_name: aircraft-avionics
-    image: python:3.9-slim
+    build: ./aircraft-app
     networks:
       - net_aircraft_internal
-    command: ["python", "-c", "print('Avionics App Running...')"] # À remplacer par votre script Scapy/UDP
+    depends_on:
+      - aircraft-sec-gw
+    environment:
+      - AIRCRAFT_GW_HOST=aircraft-sec-gw
+      - AIRCRAFT_GW_PORT=9001
 
   aircraft-sec-gw:
     container_name: aircraft-pqc-gateway
-    image: python:3.9-slim
+    build: ./aircraft-sec-gw
     depends_on:
       - fpga-emulator
     networks:
@@ -34,9 +40,13 @@ services:
       - net_management
     environment:
       - FPGA_API_URL=http://fpga-emulator:7000
-      - TELEMETRY_URL=http://telemetry-bus:7100
+      - LISTEN_UDP_PORT=9001
+      - SAT_GW_HOST=satellite-sec-gw
+      - SAT_GW_PORT=9002
+      - TELEMETRY_URL=http://telemetry-bus:4222
 
-  # --- SEGMENT SPATIAL (SIMULATION) ---
+  # ─── SEGMENT SPATIAL (SIMULATION) ─────────────────────────────────────────
+
   satcom-link-sim:
     container_name: satcom-emulator
     image: alpine
@@ -48,16 +58,24 @@ services:
 
   redteam-console:
     container_name: redteam-attacker
-    image: python:3.9-slim
+    build: ./redteam-console
     networks:
       - net_satcom_space
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     environment:
-      - TARGET_LINK=satcom-emulator
+      - TARGET_GW_HOST=satellite-sec-gw
+      - TARGET_GW_PORT=9002
+      - SPOOF_SRC_IP=10.10.10.100
+    # Lancer manuellement : docker exec -it redteam-attacker python app.py --mode inject
+    command: ["sleep", "infinity"]
 
-  # --- SEGMENT SATELLITE / SOL ---
+  # ─── SEGMENT SATELLITE / SOL ──────────────────────────────────────────────
+
   satellite-sec-gw:
     container_name: satellite-pqc-gateway
-    image: python:3.9-slim
+    build: ./satellite-sec-gw
     depends_on:
       - fpga-emulator
     networks:
@@ -66,17 +84,23 @@ services:
       - net_management
     environment:
       - FPGA_API_URL=http://fpga-emulator:7000
+      - LISTEN_UDP_PORT=9002
+      - SAT_APP_HOST=satellite-app
+      - SAT_APP_PORT=9003
 
   satellite-app:
     container_name: ground-service
-    image: python:3.9-slim
+    build: ./satellite-app
     networks:
       - net_ground_internal
+    environment:
+      - LISTEN_UDP_PORT=9003
 
-  # --- SERVICES CRITIQUES ---
+  # ─── SERVICES CRITIQUES ───────────────────────────────────────────────────
+
   fpga-emulator:
     container_name: pqc-fpga-core
-    image: python:3.9-slim
+    build: ./fpga-emulator
     networks:
       - net_management
     ports:
@@ -84,7 +108,7 @@ services:
 
   blue-ai-langchain:
     container_name: ai-supervisor
-    image: python:3.9-slim
+    build: ./blue-ai-langchain
     networks:
       - net_management
     depends_on:
@@ -102,4 +126,3 @@ services:
       - net_management
     ports:
       - "3000:3000"
-      
