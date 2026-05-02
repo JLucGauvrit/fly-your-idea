@@ -1,0 +1,105 @@
+version: "3.9"
+
+networks:
+  # Réseau isolé à l'intérieur de l'avion
+  net_aircraft_internal:
+    driver: bridge
+  # Le segment spatial (vulnérable, où l'attaquant peut agir)
+  net_satcom_space:
+    driver: bridge
+  # Réseau isolé côté satellite / sol
+  net_ground_internal:
+    driver: bridge
+  # Réseau de supervision et télémétrie
+  net_management:
+    driver: bridge
+
+services:
+  # --- SEGMENT AVION ---
+  aircraft-app:
+    container_name: aircraft-avionics
+    image: python:3.9-slim
+    networks:
+      - net_aircraft_internal
+    command: ["python", "-c", "print('Avionics App Running...')"] # À remplacer par votre script Scapy/UDP
+
+  aircraft-sec-gw:
+    container_name: aircraft-pqc-gateway
+    image: python:3.9-slim
+    depends_on:
+      - fpga-emulator
+    networks:
+      - net_aircraft_internal
+      - net_satcom_space
+      - net_management
+    environment:
+      - FPGA_API_URL=http://fpga-emulator:7000
+      - TELEMETRY_URL=http://telemetry-bus:7100
+
+  # --- SEGMENT SPATIAL (SIMULATION) ---
+  satcom-link-sim:
+    container_name: satcom-emulator
+    image: alpine
+    networks:
+      - net_satcom_space
+    cap_add:
+      - NET_ADMIN
+    command: ["sh", "-c", "echo 'Simulateur de lien (tc/netem) prêt' && sleep infinity"]
+
+  redteam-console:
+    container_name: redteam-attacker
+    image: python:3.9-slim
+    networks:
+      - net_satcom_space
+    environment:
+      - TARGET_LINK=satcom-emulator
+
+  # --- SEGMENT SATELLITE / SOL ---
+  satellite-sec-gw:
+    container_name: satellite-pqc-gateway
+    image: python:3.9-slim
+    depends_on:
+      - fpga-emulator
+    networks:
+      - net_satcom_space
+      - net_ground_internal
+      - net_management
+    environment:
+      - FPGA_API_URL=http://fpga-emulator:7000
+
+  satellite-app:
+    container_name: ground-service
+    image: python:3.9-slim
+    networks:
+      - net_ground_internal
+
+  # --- SERVICES CRITIQUES ---
+  fpga-emulator:
+    container_name: pqc-fpga-core
+    image: python:3.9-slim
+    networks:
+      - net_management
+    ports:
+      - "7000:7000"
+
+  blue-ai-langchain:
+    container_name: ai-supervisor
+    image: python:3.9-slim
+    networks:
+      - net_management
+    depends_on:
+      - telemetry-bus
+
+  telemetry-bus:
+    container_name: event-broker
+    image: nats:latest
+    networks:
+      - net_management
+
+  grafana:
+    image: grafana/grafana:latest
+    networks:
+      - net_management
+    ports:
+      - "3000:3000"
+      
